@@ -30,12 +30,13 @@ struct Params {
 
 async fn query_and_send_to_redis() -> redis::RedisResult<()> {
     // 连接 MySQL
+    println!("begin connect mysql");
     let pool = Pool::new("mysql://cdcasplus:cdcas_passwd123@192.168.9.109:3306/medboxdb").unwrap();
     let mut conn = pool.get_conn().unwrap();
-
+    println!("connect mysql success");
     // 执行 SQL 查询
     let result: Option<(i32, i32, String)> = conn.query_first("SELECT CardID, UseStatus, phonenu FROM MedBoxDevice limit 1").unwrap();
-
+    println!("devive size: {:?}", result);
     if let Some((CardID, battery, tenant_id)) = result {
         // 组装数据
         let request_id = Uuid::new_v4().to_string();
