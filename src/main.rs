@@ -80,7 +80,7 @@ async fn query_and_send_to_redis() -> redis::RedisResult<()> {
         let _: () = con.xadd(stream_name, "*", &[("data", json_data)])?;
 
         println!("Data sent to Redis stream");
-        tokio::time::sleep(Duration::from_micros(1500)).await;
+        tokio::time::sleep(Duration::from_micros(2500)).await;
     }
     Ok(())
 }
@@ -88,7 +88,7 @@ async fn query_and_send_to_redis() -> redis::RedisResult<()> {
 #[tokio::main]
 async fn main() {
     // 定时任务：每 5 分钟执行一次
-    let mut interval = time::interval(Duration::from_secs(5 * 60));
+    let mut interval = time::interval(Duration::from_secs(15 * 60));
 
     loop {
         interval.tick().await; // 等待 5 分钟
