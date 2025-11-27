@@ -26,6 +26,7 @@ struct DeviceData {
 #[derive(Serialize)]
 struct Params {
     battery: String,
+    phone: String,
 }
 
 async fn query_and_send_to_redis() -> redis::RedisResult<()> {
@@ -35,9 +36,9 @@ async fn query_and_send_to_redis() -> redis::RedisResult<()> {
     let mut conn = pool.get_conn().unwrap();
     println!("connect mysql success");
     // 执行 SQL 查询
-    let result: Option<(i32, i32, String)> = conn.query_first("SELECT CardID, UseStatus, phonenu FROM MedBoxDevice limit 1").unwrap();
+    let result: Option<(i32, i32, String)> = conn.query_first("SELECT CardID, UseStatus, phonenu FROM MedBoxDevice").unwrap();
     println!("devive size: {:?}", result);
-    if let Some((CardID, battery, tenant_id)) = result {
+    if let Some((CardID, battery, phonenu)) = result {
         // 组装数据
         let request_id = Uuid::new_v4().to_string();
         // 获取当前时间戳（毫秒）
@@ -55,6 +56,7 @@ async fn query_and_send_to_redis() -> redis::RedisResult<()> {
             method: "thing.property.post".to_string(),
             params: Params {
                 battery: battery.to_string(),
+                phone: phonenu,
             },
             data: None,
             code: None,
