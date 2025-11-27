@@ -1,3 +1,4 @@
+use std::thread::sleep;
 use std::time::{SystemTime, UNIX_EPOCH};
 use mysql::Pool;
 // use mysql::*;
@@ -29,6 +30,8 @@ struct Params {
     phone: String,
 }
 
+
+
 async fn query_and_send_to_redis() -> redis::RedisResult<()> {
     // 连接 MySQL
     println!("begin connect mysql");
@@ -36,9 +39,16 @@ async fn query_and_send_to_redis() -> redis::RedisResult<()> {
     let mut conn = pool.get_conn().unwrap();
     println!("connect mysql success");
     // 执行 SQL 查询
-    let result: Option<(i32, i32, String)> = conn.query_first("SELECT CardID, UseStatus, phonenu FROM MedBoxDevice").unwrap();
-    println!("devive size: {:?}", result);
-    if let Some((CardID, battery, phonenu)) = result {
+
+    let results: Vec<(i32, i32, String)> = conn.query("SELECT CardID, UseStatus, phonenu FROM MedBoxDevice").unwrap();
+    println!("device size: {:?}", results.len());
+    // 连接 Redis
+    let client = Client::open("redis://39.106.149.139/").unwrap();
+    let mut con = client.get_connection()?;
+    // 发送到 Redis Stream
+    let stream_name = "iot_device_message"; // 可以根据需要修改 stream 名称
+
+    for (CardID, battery, phonenu) in results {
         // 组装数据
         let request_id = Uuid::new_v4().to_string();
         // 获取当前时间戳（毫秒）
@@ -66,19 +76,12 @@ async fn query_and_send_to_redis() -> redis::RedisResult<()> {
         // 转换成 JSON
         let json_data = serde_json::to_string(&device_data).unwrap();
 
-        // 连接 Redis
-        let client = Client::open("redis://39.106.149.139/").unwrap();
-        let mut con = client.get_connection()?;
-        // 发送到 Redis Stream
-        let stream_name = "iot_device_message"; // 可以根据需要修改 stream 名称
+
         let _: () = con.xadd(stream_name, "*", &[("data", json_data)])?;
 
         println!("Data sent to Redis stream");
-
-    } else {
-        println!("No device found with the given ID.");
+        tokio::time::sleep(Duration::from_micros(1500)).await;
     }
-
     Ok(())
 }
 
