@@ -40,7 +40,7 @@ async fn query_and_send_to_redis() -> redis::RedisResult<()> {
     println!("connect mysql success");
     // 执行 SQL 查询
 
-    let results: Vec<(i32, i32, String)> = conn.query("SELECT CardID, UseStatus, phonenu,TimeStamps FROM MedBoxDevice where CardId > 20000000").unwrap();
+    let results: Vec<(i32, i32, String)> = conn.query("SELECT CardID, UseStatus, phonenu,TimeStamps FROM MedBoxDevice where CardId = 28021833").unwrap();
     println!("device size: {:?}", results.len());
     // 连接 Redis
     let client = Client::open("redis://39.106.149.139/").unwrap();
