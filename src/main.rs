@@ -28,6 +28,7 @@ struct DeviceData {
 struct Params {
     battery: String,
     phone: String,
+    last_time: String,
 }
 
 
@@ -40,7 +41,7 @@ async fn query_and_send_to_redis() -> redis::RedisResult<()> {
     println!("connect mysql success");
     // 执行 SQL 查询
 
-    let results: Vec<(i32, i32, String)> = conn.query("SELECT CardID, UseStatus, phonenu,TimeStamps FROM MedBoxDevice where CardId = 28021833").unwrap();
+    let results: Vec<(i32, i32, String,String)> = conn.query("SELECT CardID, UseStatus, phonenu,TimeStamps FROM MedBoxDevice where CardId = 28021833").unwrap();
     println!("device size: {:?}", results.len());
     // 连接 Redis
     let client = Client::open("redis://39.106.149.139/").unwrap();
@@ -48,7 +49,7 @@ async fn query_and_send_to_redis() -> redis::RedisResult<()> {
     // 发送到 Redis Stream
     let stream_name = "iot_device_message"; // 可以根据需要修改 stream 名称
 
-    for (CardID, battery, phonenu) in results {
+    for (CardID, battery, phonenu,TimeStamps) in results {
         // 组装数据
         let request_id = Uuid::new_v4().to_string();
         // 获取当前时间戳（毫秒）
@@ -67,6 +68,7 @@ async fn query_and_send_to_redis() -> redis::RedisResult<()> {
             params: Params {
                 battery: battery.to_string(),
                 phone: phonenu,
+                last_time: TimeStamps,
             },
             data: None,
             code: None,
