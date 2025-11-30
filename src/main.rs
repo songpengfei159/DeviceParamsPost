@@ -5,9 +5,11 @@ use mysql::Pool;
 use mysql::prelude::*;
 use redis::{Client, Commands};
 use serde::{Serialize};
-use serde_json::json;
+use std::fs::File;
 use tokio::time::{self, Duration};
 use uuid::Uuid;
+use std::io::{BufRead, BufReader};
+
 
 #[derive(Serialize)]
 struct DeviceData {
@@ -31,17 +33,55 @@ struct Params {
     last_time: String,
 }
 
+// 从文件读取每一行，解析成 i64，返回 Vec<i64>
+fn read_ids_from_file(path: &str) -> std::io::Result<Vec<i64>> {
+    let f = File::open(path)?;
+    let reader = BufReader::new(f);
+    let mut ids = Vec::new();
+    for line in reader.lines() {
+        let s = line?.trim().to_string();
+        if s.is_empty() {
+            continue;
+        }
+
+        match s.parse::<i64>() {
+            Ok(v) => ids.push(v),
+            Err(_) => eprintln!("skip invalid id: sss{}ss", s),
+        }
+    }
+    Ok(ids)
+}
 
 
 async fn query_and_send_to_redis() -> redis::RedisResult<()> {
+    // 在您的 async 函数中替换原注释处的代码示例：
+    // 读取文件，拼接占位符，构建 params 并执行带占位符的查询
+    let id_list = match read_ids_from_file("./163_device") {
+        Ok(v) if !v.is_empty() => v,
+        Ok(_) => {
+            println!("no ids found in file");
+            Vec::new()
+        }
+        Err(e) => {
+            eprintln!("failed to read ids file: {:?}", e);
+            Vec::new()
+        }
+    };
+    // 读取文件 163_device.csv 每一行 拼接成 in 语句
+
+    let placeholders = id_list.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(",");
+    let sql = format!(
+        "SELECT CardID, UseStatus, phonenu, TimeStamps FROM MedBoxDevice WHERE CardId IN ({})",
+        placeholders
+    );
+    println!("start querying mysql: {}", sql);
     // 连接 MySQL
     println!("begin connect mysql");
     let pool = Pool::new("mysql://cdcasplus:cdcas_passwd123@192.168.9.109:3306/medboxdb").unwrap();
     let mut conn = pool.get_conn().unwrap();
     println!("connect mysql success");
     // 执行 SQL 查询
-
-    let results: Vec<(i32, i32, String,String)> = conn.query("SELECT CardID, UseStatus, phonenu,TimeStamps FROM MedBoxDevice where CardId = 28021833").unwrap();
+    let results: Vec<(i32, i32, String,String)> = conn.query(sql).unwrap();
     println!("device size: {:?}", results.len());
     // 连接 Redis
     let client = Client::open("redis://39.106.149.139/").unwrap();
