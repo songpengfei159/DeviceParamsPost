@@ -9,7 +9,9 @@ use std::fs::File;
 use tokio::time::{self, Duration};
 use uuid::Uuid;
 use std::io::{BufRead, BufReader};
-
+use calamine::{open_workbook, Reader, Xlsx, DataType};
+use std::collections::HashMap;
+use chrono::{NaiveDate, NaiveDateTime};
 
 #[derive(Serialize)]
 struct DeviceData {
@@ -31,8 +33,118 @@ struct Params {
     battery: String,
     phone: String,
     last_time: String,
+    card_en: String,
+    card_st: String,
 }
 
+// 定义数据结构
+#[derive(Debug)]
+struct SimCardInfo {
+    msisdn: String,
+    issue_time: Option<NaiveDateTime>,
+    expiry_time: Option<NaiveDateTime>,
+}
+fn read_simcards_to_map(file_path: &str) -> Result<HashMap<String, SimCardInfo>, Box<dyn std::error::Error>> {
+    let mut workbook: Xlsx<_> = open_workbook(file_path)?;
+    let mut simcard_map = HashMap::new();
+
+    // 假设数据在名为 "Sheet1" 的工作表中
+    if let Some(Ok(range)) = workbook.worksheet_range("Sheet1") {
+        // 遍历每一行数据 (跳过可能的标题行)
+        for (i, row) in range.rows().enumerate() {
+            // 跳过标题行（假设第一行是标题）
+            if i == 0 { continue; }
+
+            // 确保行有足够的数据列（至少4列）
+            if row.len() < 4 {
+                eprintln!("第 {} 行数据列数不足，跳过", i + 1);
+                continue;
+            }
+
+            // 解析 MSISDN (作为键)
+            let msisdn = match &row[0] {
+                DataType::String(s) => s.clone(),
+                DataType::Int(n) => n.to_string(),
+                DataType::Float(f) => f.to_string(),
+                _ => {
+                    eprintln!("第 {} 行 MSISDN 格式异常，跳过", i + 1);
+                    continue;
+                }
+            };
+
+            // 解析 ICCID
+            let iccid = match &row[1] {
+                DataType::String(s) => s.clone(),
+                DataType::Int(n) => n.to_string(),
+                DataType::Float(f) => f.to_string(),
+                _ => {
+                    eprintln!("第 {} 行 ICCID 格式异常，跳过", i + 1);
+                    continue;
+                }
+            };
+
+            // 解析发卡时间（可选字段）
+            let issue_time = parse_datetime(&row[2]);
+
+            // 解析卡到期时间（可选字段）
+            let expiry_time = parse_datetime(&row[3]);
+
+            // 插入到 HashMap
+            simcard_map.insert(iccid , SimCardInfo {
+                msisdn ,
+                issue_time,
+                expiry_time,
+            });
+        }
+    }
+
+    Ok(simcard_map)
+}
+// 辅助函数：将 DataType 解析为 NaiveDateTime
+fn parse_datetime(data: &DataType) -> Option<NaiveDateTime> {
+    match data {
+        DataType::DateTime(dt) => {
+            // calamine 的 DateTime 类型是 f64 (OLE自动化日期)
+            // 需要转换为 chrono 的 NaiveDateTime
+            // 这里简单地将浮点数转换为字符串，实际使用时需要根据Excel日期格式进行转换
+            Some(NaiveDateTime::from_timestamp(
+                (dt * 86400.0 - 2209161600.0) as i64,
+                0
+            ))
+        },
+        DataType::String(s) => {
+            // 尝试解析完整的日期时间
+            if let Ok(dt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S") {
+                return Some(dt);
+            }
+
+            // 尝试解析仅日期格式（没有时间部分）
+            if let Ok(date) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+                // 将 NaiveDate 转换为 NaiveDateTime（时间设为 00:00:00）
+                return Some(date.and_hms_opt(0, 0, 0).unwrap());
+            }
+
+            // 尝试其他常见的日期格式
+            let date_formats = [
+                "%Y/%m/%d",
+                "%Y.%m.%d",
+                "%Y年%m月%d日",
+                "%d/%m/%Y",
+                "%m/%d/%Y",
+            ];
+
+            for fmt in &date_formats {
+                if let Ok(date) = NaiveDate::parse_from_str(s, fmt) {
+                    return Some(date.and_hms_opt(0, 0, 0).unwrap());
+                }
+            }
+
+            None
+        },
+        DataType::Empty => None,
+        _ => None,
+    }
+}
 // 从文件读取每一行，解析成 i64，返回 Vec<i64>
 fn read_ids_from_file(path: &str) -> std::io::Result<Vec<i64>> {
     let f = File::open(path)?;
@@ -53,7 +165,7 @@ fn read_ids_from_file(path: &str) -> std::io::Result<Vec<i64>> {
 }
 
 
-async fn query_and_send_to_redis() -> redis::RedisResult<()> {
+async fn query_and_send_to_redis(card: &HashMap<String, SimCardInfo>) -> redis::RedisResult<()> {
     // 在您的 async 函数中替换原注释处的代码示例：
     // 读取文件，拼接占位符，构建 params 并执行带占位符的查询
     let id_list = match read_ids_from_file("./163_device") {
@@ -88,7 +200,8 @@ async fn query_and_send_to_redis() -> redis::RedisResult<()> {
     let mut con = client.get_connection()?;
     // 发送到 Redis Stream
     let stream_name = "iot_device_message"; // 可以根据需要修改 stream 名称
-
+    let mut card_en = String::from("未知");;
+    let mut card_st = String::from("未知");
     for (CardID, battery, phonenu,TimeStamps) in results {
         // 组装数据
         let request_id = Uuid::new_v4().to_string();
@@ -97,6 +210,11 @@ async fn query_and_send_to_redis() -> redis::RedisResult<()> {
             .duration_since(UNIX_EPOCH)
             .expect("Time went backwards")
             .as_millis() as i64;
+        if let Some(info) = card.get(&phonenu.clone()) {
+            println!("MSISDN: 8613800138000");
+            card_en= info.issue_time.unwrap().clone().to_string();
+            card_st = info.expiry_time.unwrap().clone().to_string();
+        }
         let device_data = DeviceData {
             id: request_id.clone(),
             reportTime: report_time,
@@ -109,6 +227,8 @@ async fn query_and_send_to_redis() -> redis::RedisResult<()> {
                 battery: battery.to_string(),
                 phone: phonenu,
                 last_time: TimeStamps,
+                card_en: card_en.clone(),
+                card_st: card_st.clone(),
             },
             data: None,
             code: None,
@@ -131,11 +251,16 @@ async fn query_and_send_to_redis() -> redis::RedisResult<()> {
 async fn main() {
     // 定时任务：每 5 分钟执行一次
     let mut interval = time::interval(Duration::from_secs(15 * 60));
+    let file_path = "/Users/spf/Downloads/森赛尔-电话卡.xlsx"; // 你的Excel文件路径
+    let simcard_map = read_simcards_to_map(file_path).expect("Failed to read SIM card data");
+
+    // 打印结果
+    println!("共读取 {} 条SIM卡记录", simcard_map.len());
 
     loop {
         interval.tick().await; // 等待 5 分钟
 
-        if let Err(e) = query_and_send_to_redis().await {
+        if let Err(e) = query_and_send_to_redis(&simcard_map).await {
             eprintln!("Error occurred: {:?}", e);
         }
     }

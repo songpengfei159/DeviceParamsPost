@@ -10,3 +10,5 @@ serde = "1.0"
 serde_json = "1.0"
 tokio = { version = "1", features = ["full"] }
 uuid = { version = "1.0", features = ["v4"] }
+calamine = "0.21"
+chrono = "0.4"
