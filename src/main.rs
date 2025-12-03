@@ -251,7 +251,7 @@ async fn query_and_send_to_redis(card: &HashMap<String, SimCardInfo>) -> redis::
 async fn main() {
     // 定时任务：每 5 分钟执行一次
     let mut interval = time::interval(Duration::from_secs(15 * 60));
-    let file_path = "/Users/spf/Downloads/森赛尔-电话卡.xlsx"; // 你的Excel文件路径
+    let file_path = "./森赛尔-电话卡.xlsx"; // 你的Excel文件路径
     let simcard_map = read_simcards_to_map(file_path).expect("Failed to read SIM card data");
 
     // 打印结果
