@@ -35,6 +35,7 @@ struct Params {
     last_time: String,
     card_en: String,
     card_st: String,
+    validity_period: Option<String>,
 }
 
 // 定义数据结构
@@ -165,7 +166,7 @@ fn read_ids_from_file(path: &str) -> std::io::Result<Vec<i64>> {
 }
 
 
-async fn query_and_send_to_redis(card: &HashMap<String, SimCardInfo>) -> redis::RedisResult<()> {
+async fn query_and_send_to_redis(card: &HashMap<String, SimCardInfo>, report_inertval: &mut HashMap<i32, NaiveDateTime>) -> redis::RedisResult<()> {
     // 在您的 async 函数中替换原注释处的代码示例：
     // 读取文件，拼接占位符，构建 params 并执行带占位符的查询
     let id_list = match read_ids_from_file("./163_device") {
@@ -200,7 +201,7 @@ async fn query_and_send_to_redis(card: &HashMap<String, SimCardInfo>) -> redis::
     let mut con = client.get_connection()?;
     // 发送到 Redis Stream
     let stream_name = "iot_device_message"; // 可以根据需要修改 stream 名称
-    let mut card_en = String::from("未知");;
+    let mut card_en = String::from("未知");
     let mut card_st = String::from("未知");
     for (CardID, battery, phonenu,TimeStamps) in results {
         // 组装数据
@@ -210,10 +211,18 @@ async fn query_and_send_to_redis(card: &HashMap<String, SimCardInfo>) -> redis::
             .duration_since(UNIX_EPOCH)
             .expect("Time went backwards")
             .as_millis() as i64;
+        let mut validity_period:Option<String> = None;
         if let Some(info) = card.get(&phonenu.clone()) {
             println!("MSISDN: 8613800138000");
-            card_en= info.issue_time.unwrap().clone().to_string();
-            card_st = info.expiry_time.unwrap().clone().to_string();
+            card_st= info.issue_time.unwrap().clone().to_string();
+            card_en= info.expiry_time.unwrap().clone().to_string();
+            // 计算 今天到 card_en 的天数差,并且如果今天只汇报一次
+            if(!report_inertval.contains_key(&CardID)){
+                let now = chrono::Local::now().naive_local();
+                let days_diff = (info.expiry_time.unwrap() - now).num_days();
+                validity_period = Option::from(days_diff.to_string());
+                report_inertval.insert(CardID, now);
+            }
         }
         let device_data = DeviceData {
             id: request_id.clone(),
@@ -229,6 +238,7 @@ async fn query_and_send_to_redis(card: &HashMap<String, SimCardInfo>) -> redis::
                 last_time: TimeStamps,
                 card_en: card_en.clone(),
                 card_st: card_st.clone(),
+                validity_period,
             },
             data: None,
             code: None,
@@ -250,17 +260,23 @@ async fn query_and_send_to_redis(card: &HashMap<String, SimCardInfo>) -> redis::
 #[tokio::main]
 async fn main() {
     // 定时任务：每 5 分钟执行一次
-    let mut interval = time::interval(Duration::from_secs(15 * 60));
+    let mut interval = time::interval(Duration::from_secs(30 * 60));
     let file_path = "./森赛尔-电话卡.xlsx"; // 你的Excel文件路径
     let simcard_map = read_simcards_to_map(file_path).expect("Failed to read SIM card data");
 
     // 打印结果
     println!("共读取 {} 条SIM卡记录", simcard_map.len());
-
+    let mut report_inertval: HashMap<i32, NaiveDateTime> = HashMap::new();
+    let mut count = 0;
     loop {
         interval.tick().await; // 等待 5 分钟
-
-        if let Err(e) = query_and_send_to_redis(&simcard_map).await {
+        // 没循环 48次 清空一次 report_inertval
+        count += 1;
+        if count >= 48 {
+            report_inertval.clear();
+            count = 0;
+        }
+        if let Err(e) = query_and_send_to_redis(&simcard_map, &mut report_inertval).await {
             eprintln!("Error occurred: {:?}", e);
         }
     }
