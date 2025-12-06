@@ -201,10 +201,10 @@ async fn query_and_send_to_redis(card: &HashMap<String, SimCardInfo>, report_ine
     let mut con = client.get_connection()?;
     // 发送到 Redis Stream
     let stream_name = "iot_device_message"; // 可以根据需要修改 stream 名称
-    let mut card_en = String::from("未知");
-    let mut card_st = String::from("未知");
     for (CardID, battery, phonenu,TimeStamps) in results {
         // 组装数据
+        let mut card_en = String::from("未知");
+        let mut card_st = String::from("未知");
         let request_id = Uuid::new_v4().to_string();
         // 获取当前时间戳（毫秒）
         let report_time = SystemTime::now()
